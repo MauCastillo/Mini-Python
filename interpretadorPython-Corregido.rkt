@@ -2,7 +2,12 @@
 (require data/gvector) 
 
 ;******************************************************************************************
+; INTEGRANTES
+
 ;Mauricio Castillo 1226715
+;Nathalia Bedoya 1226305
+;Paola Medina 1329233
+
 ;;;;; Interpretador Simple
 
 ;; La definición BNF para las expresiones del lenguaje:
@@ -18,7 +23,12 @@
 ;;  <primitive>     ::= + | - | * | / | % |
 ;;  <bool-primitive>::= < | > | <= | >= | ==
 ;;  <bool-oper>     ::= not | and | or
-
+;-----------------------------------------------------------------------------------------
+;        Variables Globales declaradas para Muchas cosas
+;-----------------------------------------------------------------------------------------
+;;Variable para determinar el fin de un cadane o lista
+(define terminal 0)
+(define return-var '<nada>)
 
 ;; ---------------------------------------------------------------------------------------
 ;; ESPECIFICACION LEXICA
@@ -66,6 +76,8 @@
     
     ;Expreciones identificador
     (expression (identifier) var-exp)
+    ;Exprecion Begin
+    (expression ("begin" expression (arbno ";" expression) "end")begin-exp)
 
     
     ;2.1.1 Expresiones Booleanas
@@ -129,18 +141,31 @@
     ; Expresion not
     (expression("not" "(" (arbno  expression) ")" )primaNot-exp)
 
-    ;2.6 Definicion de ambientes para la variale Var
-    (expression ("var" identifier "=" expression)set-exp)
-    ; Definicion de variables Globales
-    (expression ("global" identifier "=" expression)
-                global-exp)
-
     ;;2.7 Definicion una funcion 
     (expression("def" identifier "(" (separated-list identifier "," ) ")" ":" (arbno expression) "return" expression "end")funtion)
     (expression("execute" identifier "(" (separated-list expression ",") ")")funtionExecute)
-    ;; 4 Implementacion de Ciclos
-   (expression ("for" identifier "in" "range" "(" expression "," expression")" "do" expression (arbno expression) "end") for-exp)
-   (expression ("while" "(" expression ")" "do" expression (arbno expression) "end" ) while-exp)
+    ;Funcion para saber si arlgo es un retorno
+    (expression
+               ("retornar" expression ) return-exp)
+    ;-----------------------------------------------------------------------------------------------------
+    ;                                          4 Proyecto Ciclos For and While
+    ;-----------------------------------------------------------------------------------------------------
+    ;; 4.1: Proyecto Definicion de For 
+    (expression("for" identifier "in" "range" "(" expression "," expression")" "do" expression (arbno expression) "end") for-exp)
+
+    ; 4.2: Proyecto Definicion de While
+    (expression("while" "(" expression ")" "do" expression (arbno expression) "end" ) while-exp)
+    ;-----------------------------------------------------------------------------------------------------
+    ;                                          4 Asignacion de Variables
+    ;-----------------------------------------------------------------------------------------------------
+    
+    ; 3 Global <expression> := global <identificador> = <expresion>
+    (expression ("global" identifier "=" expression)global-exp)
+
+    ;2.6 Definicion de ambientes para la variale Var
+    (expression ("var" identifier "=" expression)set-exp)
+    
+    
     )
   )
 ;*****************************************************************
@@ -196,13 +221,6 @@
                                                          ))
                          )
   )
-(define-datatype proc proc?
-  (closure
-   (rands (list-of symbol?))
-   (exps (list-of expression?))
-   (env integer?)
-   )
-  )
 
 ;# Definición de datatype ambiente
 ; environment := <empty-env>
@@ -212,37 +230,32 @@
   (extended-env-record (syms  gvector?)
                        (vals  gvector?)
                        (extend-from integer?)))
+; Funcion que valida si una ruta n dada es valida en el ambiente_complemento
+; positive-integer->bool
+(define VerificacionRuta_complemento (lambda (n)
+                                       (VerificacionRuta ambiente_complemento n)
+                                           ))
 
 ; # Definicion de ambiente_complemento
 ; ambiente_complemento := <empty-env> <extended-env-record> <extended-env-record>*
 ;                  ambiente_complemento (ambiente-actual ambiente-vacio ambiente-global ambientes-locales)
-(define ambiente_complemento ( gvector init-env (empty-env-record) (extended-env-record (gvector ) (gvector) 1)))
-
+(define ambiente_complemento ( gvector init-env (empty-env-record)
+                                       (extended-env-record (gvector ) (gvector) 1)
+                                       ))
+; Funcion que valida si una ruta n dada es valida en un ambiente 
+; environmetn positive-integer -> bool
+(define VerificacionRuta
+  (lambda (env n)
+    (if  ( > n (- (gvectorLength env) 1)) #f #t)
+    ) )
 ; Funcion que devuelve el ambiente numero n del ambiente_complemento inicial
 ; si se se ingresa un n mayor a la longitud de macroamb da una exepcion
 ; ambiente_complemento -> ambiente
 (define get-env-n (lambda (n)
                 (if (> n (- (gvectorLength ambiente_complemento) 1))
-                    (eopl:error "El ambiente solicitado no existe")
+                    (eopl:error "El ambiente solicitado (No encontrado...)")
                     (gvector-ref ambiente_complemento n)
-                    )
-                )
-  )
-
-                       
-; Funcion que valida si una ruta n dada es valida en un ambiente 
-; environmetn positive-integer -> bool
-(define VerificacionRuta (lambda (env n)
-                                           (if  ( > n (- (gvectorLength env) 1)) #f #t)
-                                           )
-  )
-
-; Funcion que valida si una ruta n dada es valida en el ambiente_complemento
-; positive-integer->bool
-(define VerificacionRuta_complemento (lambda (n)
-                                            (VerificacionRuta ambiente_complemento n)
-                                           )
-  )
+                    )))
 
 ; Funcion que recibe un gvector y un simbolo, si este existe retorna su ruta en el gvector
 ; si no existe retorna 9999 (esto limita a un ambiente a tener menos de 9999 variables)
@@ -251,9 +264,7 @@
                                   ((not (VerificacionRuta gv pos)) 9999)
                                   ((eq? (gvector-ref gv pos) symb) pos)
                                   (else (search-symbol-gvector gv symb (+ pos 1)))
-                                  )
-                                )
-  )
+                                  )))
 ; Funcion que recibe un ambiente, busca si existe una variable dada en este y retorna su pocición, si no la encuentra
 ; retorna -1
 ; env->ruta
@@ -338,14 +349,16 @@
                                              (gvector-set! vals (search-var (get-env-n   pos-env) id) val)
                                              (add-var pos-env id val)
                                              )
-                                         )
-                    ))
+                                         )))
   )
 ; Funcion que adiciona una variable global, si la variable denotada por el id ingresado ya existe
 ; se modifica esta por el valor de val
 (define addGlobalVar (lambda (id val)
                          (set-var init-env id val)
-                         )  )
+                         ))
+(define set-current-env (lambda (n)
+                          (gvector-set! ambiente_complemento 0 n)
+                          ))
 
 ; Retorna el ambiente que referencia la ejecucion de instrucciones
 
@@ -374,10 +387,21 @@
       (lit-exp (datum) datum)
       (var-exp (id) (apply-env env id))
       (cht-exp (chr) chr)
-      (str-exp (cd) 
-                  (let ((end (- (string-length cd) 1))) ;#|Quitamos el ultimo caracter de la cadena|#
-                      (substring cd 1 end)))
-
+      (str-exp (cd)
+               (let ((end (- (string-length cd) 1))) ;#|Quitamos el ultimo caracter de la cadena|#
+                 (substring cd 1 end)))
+     ;Ejemplo While expretion
+      ;var a = 3
+      ;while (evaluate a < 6) do
+      ;  var a = evaluate a + 1
+      ;  print ( a )
+      ;end
+      
+    (while-exp (parada first-exp-body rest-exps-body)
+               (begin
+                 (set-var (get-current-env) 'while (parse-while-to-recursive-closure parada (cons first-exp-body rest-exps-body) env))
+                 (eval-expression (funtionExecute 'while '()) env)))
+      
 
       ;Inserto if-exp
 
@@ -423,8 +447,16 @@
               (if  (eval-expression if-test-exp env)
                                (eval-rands2 (cons if-true-first-exp if-true-rest-exps) env)
                                (eval-elif elif-test-exps elif-true-exps else-exps env)))
-
       
+
+            (begin-exp (exp exps) 
+                 (let loop ((acc (eval-expression exp env))
+                             (exps exps))
+                    (if (null? exps) 
+                        acc
+                        (loop (eval-expression (car exps) 
+                                               env)
+                              (cdr exps)))))
       
 ; Procedimietos para not
       ;se define la variable args con el rand(expresion) que se ingresa evaluado en el ambiente y se manda al
@@ -542,34 +574,29 @@
       ;Prueba:
       ;execute funcion (4,5,6)
       
-            (funtionExecute (id args)
-                       (let  ((funcion (apply-env env id)))
-                         (begin
-                           (add-env (extended-env-record (vector->gvector(list->vector (car funcion))) (vector->gvector(list->vector (map (lambda (exp) (eval-expression  exp (get-current-env))) args))) (cadddr funcion )))
-                           (setEjecucionenv (+ (get-current-env) 1))
-                           (map (lambda (exp) (eval-expression  exp (get-current-env))) (cadr funcion))
-                           (let ((resultado (eval-expression (caddr funcion) (get-current-env))))
-                             (begin
-                              (gvector-remove-last! ambiente_complemento)
-                               (setEjecucionenv (- (get-current-env) 1))
-                               resultado)))))
-      ;; For Expresion
-      (for-exp (id-var exp-val-start exp-val-end first-exp-body exps-body )
+     (funtionExecute (id argumentos)
+             (let  ((funcion (apply-env env id)))
+                   (eval-closure funcion argumentos)
+      ))
+      
+    ; 4.1 For
+    ;
+    (for-exp (id-var exp-val-start exp-val-end first-exp-body exps-body )
                (begin 
                (set-var (get-current-env) 'fore (parse-for-to-recursive-closure id-var exp-val-start exp-val-end (cons first-exp-body exps-body) env)  )
                (eval-expression (funtionExecute 'fore (list exp-val-start exp-val-end)) env)
-               )
-   
-      )
-     ;; 4 While Expresion
-    (while-exp (test-exp first-exp-body rest-exps-body)
-               (begin
-                 (set-var (get-current-env) 'while (parse-while-to-recursive-closure test-exp (cons first-exp-body rest-exps-body) env))
-                 (eval-expression (funtionExecute 'while '()) env)
-      )
-    )
-    ;;Definicion de Variable Global
+               ))
+      ; Global
       (global-exp (id exp) (addGlobalVar id (eval-expression exp env)))
+      ; Reotrnos Permite saber si una Funcion llego al punto final de RETORNO
+      (return-exp (exp)
+                  (begin
+                    (set! terminal 1)
+                    (set! return-var (eval-expression exp env))
+                    (eval-expression exp env)
+                    )
+                  )
+      
       )))
 
 
@@ -579,15 +606,38 @@
   (lambda (rands env)
      (map (lambda (x) (eval-rand x env)) rands)))
 
+
 ;;funcion que realiza el la evaluacion de los rands que recibe, pero solo retorna la ultima posicion de esa lista que retorna el map
 (define eval-rands2
-  (lambda (rands env)
-    (list-ref  (map (lambda (x) (eval-rand x env)) rands) (-(length rands)1))))
+  (lambda (list-exps env)
+    (if(null? list-exps) return-var
+       (if (eq? terminal 0)
+           (cond
+             ((or (return-exp? (car list-exps)) (eq? (length list-exps ) 1)) (eval-expression (car list-exps)  env) )
+             (else
+              (begin
+                (eval-expression (car list-exps)  env)
+                (eval-rands2 (cdr list-exps) env)
+                )))
+           return-var))))
+  ;(lambda (rands env)
+  ;  (display rands)
+  ;  (list-ref  (map (lambda (x) (eval-rand x env)) rands) (-(length rands)1
 
 (define eval-rand
   (lambda (rand env)
     (eval-expression rand env)))
-;; Definicion de Conversion del FOR y WHILE
+
+;funcion aux basada en la funcion iota para construir una lista para la iteracion
+; pero agregando el incremento para evaluar en la condicion del tamaño
+(define aux
+  (lambda (fin inc)
+    (let loop ((next 0))
+      (if (>= next fin) '()
+        (cons next (loop (+ inc next)))))))
+;; Funcion que construye un closure recursivo al interior de el interpretador
+;; que representa a la estructura for
+;; id-var exp-val-start exp-val-end exps-body -> recursive-closure
 (define parse-for-to-recursive-closure(lambda (id-var exp-val-start exp-val-end exps-body env)
   (closure (list id-var 'valend)
            (list (if-exp
@@ -671,14 +721,71 @@
 ;función que crea un ambiente extendido
 (define extend-env
   (lambda (syms vals env)
-    (extended-env-record syms vals env))) 
+    (extended-env-record syms vals env)))
+
+;;Codigo tomado del campus
+(define-datatype proc proc?
+  (closure
+   (rands (list-of symbol?))
+   (exps (list-of expression?))
+   (env integer?)
+   )
+  )
 
 
 
 
 ;****************************************************************************************
 ;Funciones Auxiliares
+;----------------------------------------------------------------------------------------
+;         Evalucion de PROC
+;----------------------------------------------------------------------------------------
+(define return-exp? (lambda (x)
+                      (if (expression? x)
+                          (cases expression x
+                            (return-exp (exp) #t)
+                            (else #f) )#f
+                 )))
 
+(define eval-closure (lambda (closur args)
+                        (cases proc closur
+                           (closure (rands body extend-from)
+                                    (begin
+                                      (add-env (extended-env-record (list->gvector rands) (list->gvector (map (lambda (exp) (eval-expression  exp (get-current-env)  )) args)) extend-from))
+                                      (set-current-env (+ (get-current-env) 1))
+                                      
+                                      (let ((resultado (eval-list-exp-with-return body (get-current-env))))
+                                        (begin
+                                          (gvector-remove-last! ambiente_complemento)
+                                          (set! terminal 0)
+                                          (set! return-var '<nada>)
+                                          (set-current-env (- (get-current-env) 1))
+                                          resultado)
+                                        )
+                                      )
+                       )))
+  )
+;; Funcion que evalua una lista de expresiones una por una, si encuentra un return para la evaluación y devuelve el valor de
+;; el retorno
+;; list-of-expressions -> valor-retorno (bien puede ser void)
+(define eval-list-exp-with-return (lambda (list-exps env)
+                                    (if
+                                      (null? list-exps) return-var
+                                      (if (eq? terminal 0)
+                                          (cond
+                                            ((or (return-exp? (car list-exps)) (eq? (length list-exps ) 1)) (eval-expression (car list-exps)  env) )
+                                            (else
+                                          (begin
+                                            (eval-expression (car list-exps)  env) 
+                                            (eval-list-exp-with-return (cdr list-exps) env)
+                                            )
+                                          )
+                                            )
+                                          return-var                                                                                  
+                                      )
+                                      )
+                                    )
+  )
 ; funciones auxiliares para encontrar la posición de un símbolo
 ; en la lista de símbolos de unambiente
 
