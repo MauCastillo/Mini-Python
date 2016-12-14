@@ -1,4 +1,5 @@
 #lang eopl
+
 (require data/gvector) 
 
 ;******************************************************************************************
@@ -28,6 +29,8 @@
 ;; ---------------------------------------------------------------------------------------
 (define break 0)
 (define return-var '<vacio>)
+(define pos-global-env 2)
+(define pos-empty-env 1)
 ;; ---------------------------------------------------------------------------------------
 ;; ESPECIFICACION LEXICA
 ;; ---------------------------------------------------------------------------------------
@@ -146,11 +149,31 @@
     ("return" expression ) return-exp)
     
     (expression("execute" identifier "(" (separated-list expression ",") ")")funtion-execute)
+     (expression ("global" identifier "=" expression)
+                global-exp)
     
     ;<expr e s s i on> := f o r <i d e n t i f i c a d o r > in range(<expr e s s i on >,<expr e s s i on >) do <expr e s s i on>+ end
     ;for-exp(id initexp nexp exp lexp)
     
     (expression ("for" identifier "in" "range" "(" expression "," expression ")" "do" expression (arbno expression) "end" )for-exp)
+;--------------------------------------------------------------------------------------------
+;                                 Implementcion de Objetos
+;--------------------------------------------------------------------------------------------
+   (dec-clase
+     ("class" identifier "("identifier")" ":"(arbno "field" identifier) (arbno metodo) "end") a-class-decl)
+    
+    (metodo
+     ("def" identifier  "(" (separated-list identifier "," ) ")"  ":" (arbno expression) "end") a-method-decl)
+
+    (expression
+     ("new" identifier "(" (separated-list expression "," ) ")")
+     new-object-exp)
+    (expression
+     ("send" expression identifier "(" (separated-list expression "," ) ")")
+     method-app-exp)
+    (expression
+     ("super" identifier "("(arbno expression ",")")")
+     super-call-exp)
     )
   )
 ;*****************************************************************
@@ -203,9 +226,55 @@
 (define init-env 2)
 (define gvectorLength (lambda (arreglo)
                          (vector-length (gvector->vector arreglo
-                                                         ))
-                         )
+                                                         )
+                                        )
+                        )
   )
+;***********************************************************************************************
+;                                   Objetos Simples 
+;***********************************************************************************************
+(define class-decl->class-name
+  (lambda (c-decl)
+    (cases dec-clase c-decl
+      (a-class-decl (class-name super-name field-ids m-decls)
+        class-name))))
+
+(define class-decl->super-name
+  (lambda (c-decl)
+    (cases dec-clase c-decl
+      (a-class-decl (class-name super-name field-ids m-decls)
+        super-name))))
+
+(define class-decl->field-ids
+  (lambda (c-decl)
+    (cases dec-clase c-decl
+      (a-class-decl (class-name super-name field-ids m-decls)
+        field-ids))))
+
+(define class-decl->method-decls
+  (lambda (c-decl)
+    (cases dec-clase c-decl
+      (a-class-decl (class-name super-name field-ids m-decls)
+        m-decls))))
+
+(define method-decl->method-name
+  (lambda (md)
+    (cases metodo md
+      (a-method-decl (method-name ids body) method-name))))
+
+(define method-decl->ids
+  (lambda (md)
+    (cases metodo md
+      (a-method-decl (method-name ids body) ids))))
+
+(define method-decl->body
+  (lambda (md)
+    (cases metodo md
+      (a-method-decl (method-name ids body) body))))
+
+(define method-decls->method-names
+  (lambda (mds)
+    (map method-decl->method-name mds)))
 
 ;# Definición de datatype ambiente
 ; environment := <empty-env>
@@ -215,6 +284,7 @@
   (extended-env-record (syms  gvector?)
                        (vals  gvector?)
                        (extend-from integer?)))
+;;Datatype para Procedimientos y Closure
 (define-datatype proc proc?
   (closure
    (rands (list-of symbol?))
@@ -222,6 +292,11 @@
    (env integer?)
    )
   )
+;(define-datatype procval procval?
+;  (closure 
+;    (ids (list-of symbol?)) 
+;    (body expression?)
+;    (env environment?)))
 
 ; # Definicion de ambiente_complemento
 ; ambiente_complemento := <empty-env> <extended-env-record> <extended-env-record>*
@@ -584,12 +659,29 @@
       
       ;<expr e s s i on> := f o r <i d e n t i f i c a d o r > in range(<expr e s s i on >,<expr e s s i on >) do <expr e s s i on>+ end
     ;for-exp(id initexp nexp exp lexp)
-      
+   (new-object-exp (class-name rands)
+        (let ((args (eval-rands rands env))
+              (obj (new-object class-name)))
+          (find-method-and-apply
+            'init class-name obj args)
+          obj))
+      (method-app-exp (obj-exp method-name rands)
+        (let ((args (eval-rands rands env))
+              (obj (eval-expression obj-exp env)))
+          (find-method-and-apply
+            method-name (object->class-name obj) obj args)))
+      (super-call-exp (method-name rands)
+        (let ((args (eval-rands rands env))
+              (obj (apply-env env 'self)))
+          (find-method-and-apply
+            method-name (apply-env env '%super) obj args)))
       (for-exp (id inicio fin body bodys)
                
                (for-each 
                (lambda (x) (eval-expression body env))
                (aux (- (eval-expression fin env)(eval-expression inicio env)) (eval-expression inicio env))))
+      ;Variables Globales
+      (global-exp (id exp) (addGlobalVar id (eval-expression exp env)))
       )))
 
 
@@ -624,6 +716,22 @@
     (let loop ((next 0))
       (if (>= next fin) '()
         (cons next (loop (+ inc next)))))))
+(define iota
+  (lambda (end)
+    (let loop ((next 0))
+      (if (>= next end) '()
+        (cons next (loop (+ 1 next)))))))
+;^; waiting for 5-4-2.  Brute force code.
+(define list-find-last-position
+  (lambda (sym los)
+    (let loop
+      ((los los) (curpos 0) (lastpos #f))
+      (cond
+        ((null? los) lastpos)
+        ((eqv? sym (car los))
+         (loop (cdr los) (+ curpos 1) curpos))
+        (else (loop (cdr los) (+ curpos 1) lastpos))))))
+
 
 ;apply-primitive: <primitiva> <list-of-expression> -> numero
 (define apply-primitive
@@ -672,7 +780,7 @@
 
 ;****************************************************************************************
 ;Funciones Auxiliares
-
+;-------------------------------------------------------------------------------
 ; funciones auxiliares para encontrar la posición de un símbolo
 ; en la lista de símbolos de un ambiente
 ;
@@ -684,8 +792,6 @@
           (return-exp (exp) #t)
           (else #f))
         #f)))
-;___________________________________________________________________________________________
-
 
 (define list-find-position
   (lambda (sym los)
@@ -712,6 +818,205 @@
 ;-------------------------------------------------------------------------------
 ;      Agrego Variables al Ambiente inicial debido a que siempre esta en blanco
 ;-------------------------------------------------------------------------------
+;^;;;;;;;;;;;;;;; objects ;;;;;;;;;;;;;;;;
+
+;^; an object is now just a single part, with a vector representing the
+;^; managed storage for the all the fields. 
+
+(define-datatype object object? 
+  (an-object
+    (class-name symbol?)
+    (fields vector?)))
+
+(define new-object
+  (lambda (class-name)
+    (an-object
+      class-name
+      (make-vector (class-name->field-length class-name))))) ;\new1
+(define-datatype class class?
+  (a-class
+    (class-name symbol?)  
+    (super-name symbol?) 
+    (field-length integer?)  
+    (field-ids (list-of symbol?))
+    (methods method-environment?)))
+;^;;;;;;;;;;;;;;; methods ;;;;;;;;;;;;;;;;
+
+(define-datatype method method?
+  (a-method
+    (method-decl metodo?)
+    (super-name symbol?)
+    (field-ids (list-of symbol?))))
+
+(define find-method-and-apply
+  (lambda (m-name host-name self args)
+    (let loop ((host-name host-name))
+      (if (eqv? host-name 'object)
+          (eopl:error 'find-method-and-apply
+            "No method for name ~s" m-name)
+          (let ((method (lookup-method m-name ;^ m-decl -> method
+                          (class-name->methods host-name))))
+            (if (method? method)
+                (apply-method method host-name self args)
+                (loop (class-name->super-name host-name))))))))
+
+(define apply-method
+  (lambda (method host-name self args)                ;\new5
+    (let ((ids (method->ids method))
+          (body (method->body method))
+          (super-name (method->super-name method))
+          (field-ids (method->field-ids method))       
+          (fields (object->fields self)))
+      (eval-expression body
+        (extend-env
+          (cons '%super (cons 'self ids))
+          (cons super-name (cons self args))
+          (extend-env-refs field-ids fields (empty-env)))))))
+
+(define rib-find-position
+  (lambda (name symbols)
+    (list-find-last-position name symbols)))
+
+;;;;;;;;;;;;;;;; method environments ;;;;;;;;;;;;;;;;
+(define extend-env-refs
+  (lambda (syms vec env)
+    (extended-env-record (list->gvector syms) (vector->gvector vec) pos-empty-env)))
+
+(define method-environment? (list-of method?)) 
+
+(define lookup-method                   
+  (lambda (m-name methods)
+    (cond
+      ((null? methods) #f)
+      ((eqv? m-name (method->method-name (car methods)))
+       (car methods))
+      (else (lookup-method m-name (cdr methods))))))
+
+;;;;;;;;;;;;;;;; class environments ;;;;;;;;;;;;;;;;
+
+;;; we'll just use the list of classes (not class decls)
+
+(define the-class-env '())
+
+(define initialize-class-env!
+  (lambda ()
+    (set! the-class-env '())))
+
+(define add-to-class-env!
+  (lambda (class)
+    (set! the-class-env (cons class the-class-env))))
+
+(define lookup-class                    
+  (lambda (name)
+    (let loop ((env the-class-env))
+      (cond
+        ((null? env) (eopl:error 'lookup-class
+                       "Unknown class ~s" name))
+        ((eqv? (class->class-name (car env)) name) (car env))
+        (else (loop (cdr env)))))))
+
+;;;;;;;;;;;;;;;; selectors ;;;;;;;;;;;;;;;;
+
+(define class->class-name
+  (lambda (c-struct)
+    (cases class c-struct
+      (a-class (class-name super-name field-length field-ids methods)
+        class-name))))
+
+(define class->super-name
+  (lambda (c-struct)
+    (cases class c-struct
+      (a-class (class-name super-name field-length field-ids methods)
+        super-name))))
+
+(define class->field-length
+  (lambda (c-struct)
+    (cases class c-struct
+      (a-class (class-name super-name field-length field-ids methods)
+        field-length))))
+
+(define class->field-ids
+  (lambda (c-struct)
+    (cases class c-struct
+      (a-class (class-name super-name field-length field-ids methods)
+        field-ids))))
+
+(define class->methods
+  (lambda (c-struct)
+    (cases class c-struct
+      (a-class (class-name super-name field-length field-ids methods)
+        methods))))
+
+(define object->class-name
+  (lambda (obj)
+    (cases object obj
+      (an-object (class-name fields)
+        class-name))))
+
+(define object->fields
+  (lambda (obj)
+    (cases object obj
+      (an-object (class-decl fields)
+        fields))))
+
+(define object->class-decl
+  (lambda (obj)
+    (lookup-class (object->class-name obj))))
+
+(define object->field-ids
+  (lambda (object)
+    (class->field-ids
+      (object->class-decl object))))
+
+(define class-name->super-name
+  (lambda (class-name)
+    (class->super-name (lookup-class class-name))))
+
+(define class-name->field-ids
+  (lambda (class-name)
+    (if (eqv? class-name 'object) '()
+      (class->field-ids (lookup-class class-name)))))
+
+(define class-name->methods
+  (lambda (class-name)
+    (if (eqv? class-name 'object) '()
+      (class->methods (lookup-class class-name)))))
+
+(define class-name->field-length
+  (lambda (class-name)
+    (if (eqv? class-name 'object)
+        0
+        (class->field-length (lookup-class class-name)))))
+
+(define method->method-decl
+  (lambda (meth)
+    (cases method meth
+      (a-method (meth-decl super-name field-ids) meth-decl))))
+
+(define method->super-name
+  (lambda (meth)
+    (cases method meth
+      (a-method (meth-decl super-name field-ids) super-name))))
+
+(define method->field-ids
+  (lambda (meth)
+    (cases method meth
+      (a-method (method-decl super-name field-ids) field-ids))))
+
+(define method->method-name
+  (lambda (method)
+    (method-decl->method-name (method->method-decl method))))
+
+(define method->body
+  (lambda (method)
+    (method-decl->body (method->method-decl method))))
+
+(define method->ids
+  (lambda (method)
+    (method-decl->ids (method->method-decl method))))
+
+
+
 (addGlobalVar 'a 9)
 (addGlobalVar 'b 5)
 (addGlobalVar 'c 3)
