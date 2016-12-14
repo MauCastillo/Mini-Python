@@ -2,7 +2,12 @@
 (require data/gvector) 
 
 ;******************************************************************************************
+; INTEGRANTES
+
 ;Mauricio Castillo 1226715
+;Nathalia Bedoya 1226305
+;Paola Medina 1329233
+
 ;;;;; Interpretador Simple
 
 ;; La definición BNF para las expresiones del lenguaje:
@@ -66,6 +71,8 @@
     
     ;Expreciones identificador
     (expression (identifier) var-exp)
+    ;Exprecion Begin
+    (expression ("begin" expression (arbno ";" expression) "end")begin-exp)
 
     
     ;2.1.1 Expresiones Booleanas
@@ -129,12 +136,28 @@
     ; Expresion not
     (expression("not" "(" (arbno  expression) ")" )primaNot-exp)
 
-    ;2.6 Definicion de ambientes para la variale Var
-    (expression ("var" identifier "=" expression)set-exp)
-
     ;;2.7 Definicion una funcion 
     (expression("def" identifier "(" (separated-list identifier "," ) ")" ":" (arbno expression) "return" expression "end")funtion)
     (expression("execute" identifier "(" (separated-list expression ",") ")")funtionExecute)
+    ;-----------------------------------------------------------------------------------------------------
+    ;                                          4 Proyecto Ciclos For and While
+    ;-----------------------------------------------------------------------------------------------------
+    ;; 4.1: Proyecto Definicion de For 
+    (expression("for" identifier "in" "range" "(" expression "," expression")" "do" expression (arbno expression) "end") for-exp)
+
+    ; 4.2: Proyecto Definicion de While
+    (expression("while" "(" expression ")" "do" expression (arbno expression) "end" ) while-exp)
+    ;-----------------------------------------------------------------------------------------------------
+    ;                                          4 Asignacion de Variables
+    ;-----------------------------------------------------------------------------------------------------
+    
+    ; 3 Global <expression> := global <identificador> = <expresion>
+    (expression ("global" identifier "=" expression)global-exp)
+
+    ;2.6 Definicion de ambientes para la variale Var
+    (expression ("var" identifier "=" expression)set-exp)
+    
+    
     )
   )
 ;*****************************************************************
@@ -364,7 +387,12 @@
       (str-exp (cd) 
                   (let ((end (- (string-length cd) 1))) ;#|Quitamos el ultimo caracter de la cadena|#
                       (substring cd 1 end)))
-
+      
+    (while-exp (parada first-exp-body rest-exps-body)
+               (begin
+                 (set-var (get-current-env) 'while (parse-while-to-recursive-closure parada (cons first-exp-body rest-exps-body) env))
+                 (eval-expression (funtionExecute 'while '()) env)))
+      
 
       ;Inserto if-exp
 
@@ -410,8 +438,16 @@
               (if  (eval-expression if-test-exp env)
                                (eval-rands2 (cons if-true-first-exp if-true-rest-exps) env)
                                (eval-elif elif-test-exps elif-true-exps else-exps env)))
-
       
+
+            (begin-exp (exp exps) 
+                 (let loop ((acc (eval-expression exp env))
+                             (exps exps))
+                    (if (null? exps) 
+                        acc
+                        (loop (eval-expression (car exps) 
+                                               env)
+                              (cdr exps)))))
       
 ; Procedimietos para not
       ;se define la variable args con el rand(expresion) que se ingresa evaluado en el ambiente y se manda al
@@ -529,17 +565,21 @@
       ;Prueba:
       ;execute funcion (4,5,6)
       
-            (funtionExecute (id args)
-                       (let  ((funcion (apply-env env id)))
-                         (begin
-                           (add-env (extended-env-record (vector->gvector(list->vector (car funcion))) (vector->gvector(list->vector (map (lambda (exp) (eval-expression  exp (get-current-env))) args))) (cadddr funcion )))
-                           (setEjecucionenv (+ (get-current-env) 1))
-                           (map (lambda (exp) (eval-expression  exp (get-current-env))) (cadr funcion))
-                           (let ((resultado (eval-expression (caddr funcion) (get-current-env))))
-                             (begin
-                              (gvector-remove-last! ambiente_complemento)
-                               (setEjecucionenv (- (get-current-env) 1))
-                               resultado)))))
+     (funtionExecute (id argumentos)
+             (let  ((funcion (apply-env env id)))
+                   (eval-closure funcion argumentos)
+      ))
+      
+    ; 4.1 For
+    ;
+            (for-exp (id-var exp-val-start exp-val-end first-exp-body exps-body )
+               (begin 
+               (set-var (get-current-env) 'fore (parse-for-to-recursive-closure id-var exp-val-start exp-val-end (cons first-exp-body exps-body) env)  )
+               (eval-expression (funtionExecute 'fore (list exp-val-start exp-val-end)) env)
+               ))
+      ; Global
+      (global-exp (id exp) (addGlobalVar id (eval-expression exp env)))
+      
       )))
 
 
@@ -549,6 +589,7 @@
   (lambda (rands env)
      (map (lambda (x) (eval-rand x env)) rands)))
 
+
 ;;funcion que realiza el la evaluacion de los rands que recibe, pero solo retorna la ultima posicion de esa lista que retorna el map
 (define eval-rands2
   (lambda (rands env)
@@ -557,6 +598,59 @@
 (define eval-rand
   (lambda (rand env)
     (eval-expression rand env)))
+
+;funcion aux basada en la funcion iota para construir una lista para la iteracion
+; pero agregando el incremento para evaluar en la condicion del tamaño
+(define aux
+  (lambda (fin inc)
+    (let loop ((next 0))
+      (if (>= next fin) '()
+        (cons next (loop (+ inc next)))))))
+;; Funcion que construye un closure recursivo al interior de el interpretador
+;; que representa a la estructura for
+;; id-var exp-val-start exp-val-end exps-body -> recursive-closure
+(define parse-for-to-recursive-closure(lambda (id-var exp-val-start exp-val-end exps-body env)
+  (closure (list id-var 'valend)
+           (list (if-exp
+            (primapp-expO (var-exp id-var) (menor-prim) (var-exp 'valend)); test-exp
+            (car exps-body);true-fist-exp
+            (if
+             (null? (cdr exps-body))
+             (list (funtionExecute  'fore (list (primapp-expO (var-exp id-var) (add-prim) (lit-exp 1)) (var-exp'valend))));true-rest-exp
+             (append  (cdr exps-body) (list (funtionExecute  'fore (list (primapp-expO (var-exp id-var) (add-prim) (lit-exp 1)) (var-exp'valend)))));true-rest-exp
+             )
+            '()
+            '()
+            '()
+            )
+                 )
+           env
+           )
+  )
+  )
+ ;; Funcion que construye un closure recursivo al interior de el interpretador
+;; que representa a la estructura while
+;; id-var exp-val-start exp-val-end exps-body -> recursive-closure test-exp first-exp-body rest-exps-body
+(define parse-while-to-recursive-closure(lambda ( test-exp exps-body env)
+  (closure '()
+           (list (if-exp
+            test-exp
+            (car exps-body);true-fist-exp
+            (if
+             (null? (cdr exps-body))
+             (list (funtionExecute  'while '()))  ;true-rest-exp
+             (append  (cdr exps-body) (list (funtionExecute  'while '())))
+             )
+            '()
+            '()
+            '()
+            )
+                 )
+           env
+           )
+  )
+  )
+
 
 ;apply-primitive: <primitiva> <list-of-expression> -> numero
 (define apply-primitive
@@ -598,7 +692,16 @@
 ;función que crea un ambiente extendido
 (define extend-env
   (lambda (syms vals env)
-    (extended-env-record syms vals env))) 
+    (extended-env-record syms vals env)))
+
+;;Codigo tomado del campus
+(define-datatype proc proc?
+  (closure
+   (rands (list-of symbol?))
+   (exps (list-of expression?))
+   (env integer?)
+   )
+  )
 
 
 
