@@ -324,7 +324,7 @@
   (closure
    (rands (list-of symbol?))
    (exps (list-of expression?))
-   (env environment?)
+   (env integer?)
    )
   )
 
