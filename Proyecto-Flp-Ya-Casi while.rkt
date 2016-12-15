@@ -1,6 +1,7 @@
 #lang eopl
 
-(require data/gvector) 
+(require data/gvector)
+(require dyoo-while-loop)
 
 ;******************************************************************************************
 ; INTEGRANTES
@@ -28,9 +29,10 @@
 ;;        Definiciones Globales
 ;; ---------------------------------------------------------------------------------------
 (define break 0)
-(define return-var '<vacio>)
-(define pos-global-env 2)
-(define pos-empty-env 1)
+(define variable-retunr '<empty>)
+(define pos-envGlobal 2)
+(define pos-envEmpty 1)
+(define pos-envTemporal-apply-env 3)
 ;; ---------------------------------------------------------------------------------------
 ;; ESPECIFICACION LEXICA
 ;; ---------------------------------------------------------------------------------------
@@ -64,7 +66,7 @@
 ;; ---------------------------------------------------------------------------------------
 
 (define grammar-simple-interpreter
-  '((program (expression) a-program)
+  '((program ((arbno dec-clase) expression) a-program)
     
     ;Expresiones char
     (expression (cht-def) cht-exp)
@@ -154,12 +156,16 @@
     
     ;<expr e s s i on> := f o r <i d e n t i f i c a d o r > in range(<expr e s s i on >,<expr e s s i on >) do <expr e s s i on>+ end
     ;for-exp(id initexp nexp exp lexp)
-    
-    (expression ("for" identifier "in" "range" "(" expression "," expression ")" "do" expression (arbno expression) "end" )for-exp)
+
+     ;For
+    (expression ("for" identifier "in" "range" "(" number "," number ")" "do"(arbno expression) "end" )for-exp)
+     ;While
+    (expression
+    ("while" "(" expression ")" "do" (arbno expression) "end" ) while-exp)
 ;--------------------------------------------------------------------------------------------
 ;                                 Implementcion de Objetos
 ;--------------------------------------------------------------------------------------------
-   (dec-clase
+    (dec-clase
      ("class" identifier "("identifier")" ":"(arbno "field" identifier) (arbno metodo) "end") a-class-decl)
     
     (metodo
@@ -213,11 +219,40 @@
 ;eval-program: <programa> -> numero
 ; función que evalúa un programa teniendo en cuenta un ambiente dado (se inicializa dentro del programa)
 
-(define eval-program
+(define eval-program 
   (lambda (pgm)
     (cases program pgm
-      (a-program (body)
-                 (eval-expression body init-env)))))
+      (a-program (c-decls exp)
+        (elaborate-class-decls! c-decls) ;\new1
+        (eval-expression exp (get-current-env))))))
+;------------------------------------------------------------------------------------------
+;                          Cosas Que Agrege Porque Las Pide
+;------------------------------------------------------------------------------------------
+(define elaborate-class-decls!
+  (lambda (c-decls)
+    (for-each elaborate-class-decl! c-decls)))
+(define elaborate-class-decl!
+  (lambda (c-decl)
+    (let ((super-name (class-decl->super-name c-decl)))
+      (let ((field-ids  (append
+                          (class-name->field-ids super-name)
+                          (class-decl->field-ids c-decl))))
+        (add-to-class-env!
+          (a-class
+            (class-decl->class-name c-decl)
+            super-name
+            (length field-ids)
+            field-ids
+            (roll-up-method-decls
+              c-decl super-name field-ids)))))))
+(define roll-up-method-decls
+  (lambda (c-decl super-name field-ids)
+    (map
+      (lambda (m-decl)
+        (a-method m-decl super-name field-ids))
+      (class-decl->method-decls c-decl))))
+
+
 ;***********************************************************************************************
 ;   AMBIENTE INICIAL
 ;***********************************************************************************************
@@ -289,19 +324,15 @@
   (closure
    (rands (list-of symbol?))
    (exps (list-of expression?))
-   (env integer?)
+   (env environment?)
    )
   )
-;(define-datatype procval procval?
-;  (closure 
-;    (ids (list-of symbol?)) 
-;    (body expression?)
-;    (env environment?)))
+
 
 ; # Definicion de ambiente_complemento
 ; ambiente_complemento := <empty-env> <extended-env-record> <extended-env-record>*
 ;                  ambiente_complemento (ambiente-actual ambiente-vacio ambiente-global ambientes-locales)
-(define ambiente_complemento ( gvector init-env (empty-env-record) (extended-env-record (gvector ) (gvector) 1)))
+(define ambiente_complemento ( gvector pos-envGlobal (empty-env-record) (extended-env-record (gvector ) (gvector) 1)))
 
 (define set-current-env (lambda (n)
                           (gvector-set! ambiente_complemento 0 n)
@@ -362,7 +393,7 @@
 ; ambiente y simbolo -> valor
 (define apply-env (lambda (env-n sym)
                     (cases  environment (get-env-n env-n)
-                      (empty-env-record () (eopl:error "Variable no definida en el ambiente de ejecucion"))
+                      (empty-env-record () (eopl:error "Variable no definida en el ambiente de ejecucion~s" sym))
                       (extended-env-record (syms vals extend-from)(cond
                                                                     ((= (search-symbol-gvector syms sym 0) 9999) (apply-env  extend-from sym))
                                                                     (else (gvector-ref vals (search-symbol-gvector syms sym 0)))) )))
@@ -389,9 +420,17 @@
 ; Retorna el ambiente el cual pertenece las variables globales.
 
 (define get-global-env (lambda()
-                         (gvector-ref ambiente_complemento init-env)
+                         (gvector-ref ambiente_complemento pos-envGlobal)
                          )
   )
+(define set-env (lambda (env pos)
+                  (if (environment? env)
+                      (gvector-set! ambiente_complemento pos env)
+                      (eopl:error "No a recibido un Ambiente: " env)
+                      )
+                  )
+  )
+
 ; Variable que define la ruta del ambiente global en el ambiente_complemento
 
 
@@ -428,8 +467,8 @@
 ; Funcion que adiciona una variable global, si la variable denotada por el id ingresado ya existe
 ; se modifica esta por el valor de val
 (define addGlobalVar (lambda (id val)
-                         (set-var init-env id val)
-                         )  )
+                         (set-var pos-envGlobal id val)
+                         ))
 
 ; Retorna el ambiente que referencia la ejecucion de instrucciones
 
@@ -538,7 +577,7 @@
       (primaPrint-exp (rands)
                    (let 
                        ((args (eval-rands rands env)))
-                     (apply-primitive(print-prim) args)))
+                     (display args)))
 
       
       
@@ -595,7 +634,7 @@
       ;var x = 4
       ;print ( x )
      
-      (set-exp (id rhs-exp)
+     (set-exp (id rhs-exp)
                   (set-var (get-current-env) id (eval-expression rhs-exp env))
                   )
 ;# 2.6 Definicion de una funcion
@@ -620,7 +659,7 @@
                   (begin
                    
                     (set! break 1)
-                    (set! return-var (eval-expression exp env))
+                    (set! variable-retunr (eval-expression exp env))
                     (eval-expression exp env)
                     )
                   )
@@ -635,25 +674,8 @@
       ;execute funcion (4,5,6)
       
       (funtion-execute (id args)
-                       (let((fun(apply-env env id)))
-                         
-                         (cases proc fun
-                           (closure (rands body extend-from)
-                                    (begin
-                                      (add-env (extended-env-record (list->gvector rands) (list->gvector (map (lambda (exp) (eval-expression  exp (get-current-env)  )) args)) extend-from))
-                                      (set-current-env (+ (get-current-env) 1))
-                                      
-                                      (let ((resultado (eval-rands2 body (get-current-env))))
-                                        (begin
-                                          (gvector-remove-last! ambiente_complemento)
-                                          (set! break 0)
-                                          (set! return-var '<vacio>)
-                                          (set-current-env (- (get-current-env) 1))
-                                          resultado)
-                                        )
-                                      )
-                                    )
-                           )
+                       (let  ((fun (apply-env env id)))
+                         (eval-closure fun args)
                          )
                        )
       
@@ -665,36 +687,88 @@
           (find-method-and-apply
             'init class-name obj args)
           obj))
+      
       (method-app-exp (obj-exp method-name rands)
         (let ((args (eval-rands rands env))
               (obj (eval-expression obj-exp env)))
           (find-method-and-apply
             method-name (object->class-name obj) obj args)))
-      (super-call-exp (method-name rands)
+
+     (super-call-exp (method-name rands)
         (let ((args (eval-rands rands env))
               (obj (apply-env env 'self)))
           (find-method-and-apply
             method-name (apply-env env '%super) obj args)))
-      (for-exp (id inicio fin body bodys)
-               
-               (for-each 
-               (lambda (x) (eval-expression body env))
-               (aux (- (eval-expression fin env)(eval-expression inicio env)) (eval-expression inicio env))))
-      ;Variables Globales
-      (global-exp (id exp) (addGlobalVar id (eval-expression exp env)))
-      )))
+;; Ejemplos para el uso del FOR
+      ;----------------------------
+      ;for i in range (2,4) do
+      ;  print ("hola")
+      ;  print (2)
+      ;  evaluate 4+5
+      ;end
+      ;----------------------------
+      ;for i in range ( 2 , 4 ) do
+      ;  print ("hola")
+      ;  print (2)
+      ;  evaluate 4+a
+      ;end
+      ;----------------------------
+      ;for i in range ( 8 , 10 ) do
+      ;  print ("hola")
+      ;  print (2)
+      ;  evaluate 4+5
+      ;end
+      
+      (for-exp (id inicio condicion list-exp)
+               (for-each (lambda (id) (display(eval-rands list-exp env))) (crearnlista (- condicion inicio) inicio)))
 
+      ;While Expression
+      ;Ejemplo
+      ;while (evaluate a < 6) do
+      ; global a = evaluate a + 1
+      ; print (a)
+      ;end
+      ;R = (3)(4)(5)(6)
+      (while-exp (test-exp rest-exps-body)
+         (while (eval-expression test-exp env)
+          (eval-rands rest-exps-body env ))
+                 )
+      ;Variables Globales
+      (global-exp (id exp)(addGlobalVar id (eval-expression exp env)))
+      )))
 
 ; funciones auxiliares para aplicar eval-expression a cada elemento de una 
 ; lista de operandos (expresiones)
+(define crearnlista
+  (lambda (tamano numero)
+    (if (<= tamano 0)
+        '()
+        (append (list numero) (crearnlista (- tamano 1) (+ numero 1))))))
 (define eval-rands
   (lambda (rands env)
      (map (lambda (x) (eval-rand x env)) rands)))
 
+(define eval-closure (lambda (procedimiento args)
+                        (cases proc procedimiento
+                           (closure (rands body extend-from)
+                                    (begin
+                                      (add-env (extended-env-record (list->gvector rands) (list->gvector (map (lambda (exp) (eval-expression  exp (get-current-env)  )) args)) extend-from))
+                                      (set-current-env (+ (get-current-env) 1))
+                                      
+                                      (let ((resultado ( eval-rands2 body (get-current-env))))
+                                        (begin
+                                          (gvector-remove-last! ambiente_complemento)
+                                          (set! break 0)
+                                          (set! variable-retunr '<empty>)
+                                          (set-current-env (- (get-current-env) 1))
+                                          resultado)
+                                        )
+                                      )))))
+
 ;;funcion que realiza el la evaluacion de los rands que recibe, pero solo retorna la ultima posicion de esa lista que retorna el map
 (define eval-rands2
   (lambda (list-rands env)
-    (if(null? list-rands) return-var
+    (if(null? list-rands) variable-retunr
        (if (eq? break 0)
            (cond
              ((or (return-exp? (car list-rands)) (eq? (length list-rands ) 1)) (eval-expression (car list-rands)  env) )
@@ -703,7 +777,7 @@
                 (eval-expression (car list-rands)  env)
                 (eval-rands2 (cdr list-rands) env)
                 )))
-           return-var))))
+           variable-retunr))))
 
 (define eval-rand
   (lambda (rand env)
@@ -773,7 +847,15 @@
 ;función que crea un ambiente extendido
 (define extend-env
   (lambda (syms vals env)
-    (extended-env-record syms vals env))) 
+    (extended-env-record (parse-some-to-gvector syms) (parse-some-to-gvector vals) pos-envGlobal)))
+
+(define parse-some-to-gvector
+  (lambda (some)
+    (cond
+      [(list? some) (list->gvector some)]
+      [(vector? some) (vector->gvector some)]
+      [else eopl:error "error construyendo la clase" some])
+    )) 
 
 
 
@@ -851,7 +933,7 @@
 (define find-method-and-apply
   (lambda (m-name host-name self args)
     (let loop ((host-name host-name))
-      (if (eqv? host-name 'object)
+      (if (eqv? host-name 'null)
           (eopl:error 'find-method-and-apply
             "No method for name ~s" m-name)
           (let ((method (lookup-method m-name ;^ m-decl -> method
@@ -861,17 +943,20 @@
                 (loop (class-name->super-name host-name))))))))
 
 (define apply-method
-  (lambda (method host-name self args)                ;\new5
+  (lambda (method host-name self args)
+    
     (let ((ids (method->ids method))
           (body (method->body method))
           (super-name (method->super-name method))
           (field-ids (method->field-ids method))       
           (fields (object->fields self)))
-      (eval-expression body
-        (extend-env
-          (cons '%super (cons 'self ids))
-          (cons super-name (cons self args))
-          (extend-env-refs field-ids fields (empty-env)))))))
+      (begin 
+      (set-env (extended-env-record (parse-some-to-gvector (cons '%super (cons 'self ids))) (parse-some-to-gvector  (cons super-name (cons self args))) pos-envGlobal)
+                 pos-envTemporal-apply-env)
+      (eval-rands2 body pos-envTemporal-apply-env)
+      ))))
+
+
 
 (define rib-find-position
   (lambda (name symbols)
@@ -880,7 +965,7 @@
 ;;;;;;;;;;;;;;;; method environments ;;;;;;;;;;;;;;;;
 (define extend-env-refs
   (lambda (syms vec env)
-    (extended-env-record (list->gvector syms) (vector->gvector vec) pos-empty-env)))
+    (extended-env-record (list->gvector syms) (vector->gvector vec) pos-envEmpty)))
 
 (define method-environment? (list-of method?)) 
 
@@ -974,17 +1059,17 @@
 
 (define class-name->field-ids
   (lambda (class-name)
-    (if (eqv? class-name 'object) '()
+    (if (eqv? class-name 'null) '()
       (class->field-ids (lookup-class class-name)))))
 
 (define class-name->methods
   (lambda (class-name)
-    (if (eqv? class-name 'object) '()
+    (if (eqv? class-name 'null) '()
       (class->methods (lookup-class class-name)))))
 
 (define class-name->field-length
   (lambda (class-name)
-    (if (eqv? class-name 'object)
+    (if (eqv? class-name 'null)
         0
         (class->field-length (lookup-class class-name)))))
 
@@ -1017,11 +1102,11 @@
 
 
 
-(addGlobalVar 'a 9)
+(addGlobalVar 'a 2)
 (addGlobalVar 'b 5)
 (addGlobalVar 'c 3)
 (addGlobalVar 'd 8)
-(addGlobalVar 'e 2)
+(addGlobalVar 'e 12)
 (addGlobalVar 'x 4)
 
 
